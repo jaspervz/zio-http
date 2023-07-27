@@ -14,9 +14,9 @@ import java.util.concurrent.TimeUnit
 @OutputTimeUnit(TimeUnit.SECONDS)
 class ServerInboundHandlerBenchmark {
 
-  private val MAX  = 10000
-  private val PAR  = 10
-  private val res  = ZIO.succeed(Response.text("Hello World!"))
+  private val MAX      = 10000
+  private val PAR      = 10
+  private val res      = ZIO.succeed(Response.text("Hello World!"))
   private val endPoint = "test"
   private val http     = Routes(Route.route(Method.GET / endPoint)(handler(res))).toHttpApp
 
@@ -30,7 +30,7 @@ class ServerInboundHandlerBenchmark {
 
   private val benchmarkZioParallel =
     (for {
-      port <- Server.install(http)
+      port   <- Server.install(http)
       client <- ZIO.service[Client]
       url    <- ZIO.fromEither(URL.decode(s"http://localhost:$port/$endPoint"))
       call = client.request(Request(url = url))
@@ -46,8 +46,6 @@ class ServerInboundHandlerBenchmark {
 
   @Benchmark
   def benchmarkAppParallel(): Unit = {
-    zio.Unsafe.unsafe(implicit u =>
-      zio.Runtime.default.unsafe.run(benchmarkZioParallel)
-    )
+    zio.Unsafe.unsafe(implicit u => zio.Runtime.default.unsafe.run(benchmarkZioParallel))
   }
 }
