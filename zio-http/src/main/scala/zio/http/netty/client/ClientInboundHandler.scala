@@ -54,9 +54,7 @@ final class ClientInboundHandler(
         ctx.writeAndFlush(fullRequest)
       case _: HttpRequest               =>
         ctx.write(jReq)
-        rtm.run(ctx, NettyRuntime.noopEnsuring) {
-          NettyBodyWriter.write(req.body, ctx).unit
-        }(Unsafe.unsafe, trace)
+        NettyBodyWriter.write(rtm, req.body, ctx)
         ctx.flush(): Unit
     }
   }

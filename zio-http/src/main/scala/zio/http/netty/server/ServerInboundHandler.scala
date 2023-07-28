@@ -180,28 +180,20 @@ private[zio] final case class ServerInboundHandler(
     response: Response,
     jRequest: HttpRequest,
     time: ServerTime,
-  ): Task[Unit] = {
-    for {
-      _ <-
-        if (response.isWebSocket) ZIO.attempt(upgradeToWebSocket(ctx, jRequest, response, runtime))
+  ): Unit =
+    if (response.isWebSocket) upgradeToWebSocket(ctx, jRequest, response, runtime)
+    else {
+      val jResponse = NettyResponseEncoder.encode(ctx, response, runtime)
+      setServerTime(time, response, jResponse)
+      ctx.writeAndFlush(jResponse)
+      val flushed   =
+        if (!jResponse.isInstanceOf[FullHttpResponse])
+          NettyBodyWriter.write(runtime, response.body, ctx)
         else
-          for {
-            jResponse <- ZIO.attempt {
-              val jResponse = NettyResponseEncoder.encode(ctx, response, runtime)
-              setServerTime(time, response, jResponse)
-              ctx.writeAndFlush(jResponse)
-              jResponse
-            }
-            flushed   <-
-              if (!jResponse.isInstanceOf[FullHttpResponse])
-                NettyBodyWriter
-                  .write(response.body, ctx)
-              else
-                ZIO.succeed(true)
-            _         <- ZIO.attempt(ctx.flush()).when(!flushed)
-          } yield ()
-    } yield ()
-  }
+          true
+      if (!flushed)
+        ctx.flush()
+    }
 
   private def attemptImmediateWrite(
     ctx: ChannelHandlerContext,
@@ -313,11 +305,9 @@ private[zio] final case class ServerInboundHandler(
   }
 
   private def writeNotFound(ctx: ChannelHandlerContext, jReq: HttpRequest): Unit = {
-    runtime.run(ctx, () => ()) {
-      val response = HttpError.NotFound(jReq.uri()).toResponse
-      val done = attemptFastWrite(ctx, response, time)
-      attemptFullWrite(ctx, response, jReq, time).unless(done)
-    }
+    val response = HttpError.NotFound(jReq.uri()).toResponse
+    if (!attemptFastWrite(ctx, response, time))
+      attemptFullWrite(ctx, response, jReq, time)
   }
 
   private def writeResponse(
@@ -342,10 +332,11 @@ private[zio] final case class ServerInboundHandler(
         }
         _        <-
           if (response ne null) {
-            (for {
-              done <- ZIO.attempt(attemptFastWrite(ctx, response, time))
-              _    <- attemptFullWrite(ctx, response, jReq, time).unless(done)
-            } yield ()).catchSomeCause { case cause =>
+            ZIO.attempt {
+              if (!attemptFastWrite(ctx, response, time)) {
+                attemptFullWrite(ctx, response, jReq, time)
+              }
+            }.catchSomeCause { case cause =>
               ZIO.attempt(
                 attemptFastWrite(ctx, withDefaultErrorResponse(cause.squash).freeze, time),
               )
